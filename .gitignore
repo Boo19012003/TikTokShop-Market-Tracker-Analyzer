@@ -1,0 +1,5 @@
+# Byte-compiled / optimized / DLL files
+.venv
+
+# file
+tiktok_user_data/
