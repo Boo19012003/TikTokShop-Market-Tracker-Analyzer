@@ -2,16 +2,16 @@ from playwright.sync_api import sync_playwright
 import time
 import pandas as pd
 import os
-import random
 
 
 def extract_products_data(product_card, category_name):
     data = {
-        "Category": category_name,
+        "Product_ID": "N/A",
         "Title": "N/A",
-        "Label_Trend_Viet": "Không",    # Nhãn: Xu hướng / Hàng Việt
-        "Label_Marketing": "Không",     # Nhãn: Deal / Flash Sale
         "Link": "N/A",
+        "Category": category_name,
+        "Label_Trend": "Không",    # Nhãn: Xu hướng / Hàng Việt
+        "Label_Marketing": "Không",     # Nhãn: Deal / Flash Sale
         "Rating": "0",
         "Sold": "0",
         "Original_Price": "N/A",
@@ -26,18 +26,19 @@ def extract_products_data(product_card, category_name):
         if title_el:
             data["Title"] = title_el.inner_text().strip()
 
-            img_labels = product_card.query_selector_all("img")
-            if img_labels:
-                src = img_labels.get_attribute("src")
-                if "6146a1d9caee4ae286fa92f8cbc0c449" in src:
-                    data["Label_Trend_Viet"] = "Xu hướng"
-                elif "751625e8194f455cb1ce639b4f9dff2c" in src:
-                    data["Label_Trend_Viet"] = "Hàng Việt"
-                else:
-                    data["Label_Trend_Viet"] = "Không nhãn"
+            img_labels = title_el.query_selector_all("img")
+            for img in img_labels:
+                src = img.get_attribute("src")
+                if src:
+                    if "6146a1d9caee4ae286fa92f8cbc0c449" in src:
+                        data["Label_Trend"] = "Xu hướng"
+                        break
+                    elif "751625e8194f455cb1ce639b4f9dff2c" in src:
+                        data["Label_Trend"] = "Hàng Việt"
+                        break
     except:
         pass
-    # Link sản phẩm
+    # Link sản phẩm & Product ID
     try:
         link_el = product_card.query_selector("a[href*='/pdp/']")
         if link_el:
@@ -47,6 +48,10 @@ def extract_products_data(product_card, category_name):
                 data["Link"] = "https://www.tiktok.com" + href
             else:
                 data["Link"] = href
+
+            # Lấy Product ID từ URL
+            Product_ID = href.split('?')[0].rsplit('/')[-1]
+            data["Product_ID"] = Product_ID
     except:
         pass
 
@@ -154,7 +159,22 @@ def scrape_tiktok_shop(url):
 
             try:
                 page.goto(cat['url'])
-                page.wait_for_timeout(20000)
+                while True:
+                    if page.locator("div.sc-iRbamj.gtaCnW.captcha_verify_bar--title:has-text('Verify to continue:')").count() > 0:
+                        input(
+                            "Nhấn Enter để tiếp tục sau khi đã giải quyết CAPTCHA...")
+
+                    else:
+                        if page.locator('div.flex.justify-center.mt-16:has-text("No more products")').count() > 0:
+                            print("--- Đã tải hết sản phẩm ---")
+                            break
+
+                        else:
+                            page.get_by_role(
+                                "button", name="View more").click(timeout=2000)
+                            page.wait_for_timeout(2000)
+
+                page.mouse.wheel(0, 800)
 
                 product_cards = page.query_selector_all(
                     "div[class*='rounded']:has(a[href*='/pdp/'])")
@@ -180,9 +200,7 @@ def scrape_tiktok_shop(url):
             except Exception as e:
                 print(f"Lỗi khi xử lý danh mục '{cat['name']}': {e}")
 
-            sleep_time = random.randint(5, 10)
-            print(f"--- Đang chờ {sleep_time} giây trước khi tiếp tục... ---")
-            time.sleep(sleep_time)
+            time.sleep(2)
 
         print("-" * 50)
         print("--- Hoàn tất thu thập dữ liệu từ TikTok Shop ---")
