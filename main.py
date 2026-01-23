@@ -3,6 +3,9 @@ import time
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from datetime import datetime, timezone
+
+from captcha_solver import solve_tiktok_captcha
 
 load_dotenv()
 
@@ -14,6 +17,29 @@ if not SUPABASE_URL or not SUPABASE_KEY:
         "SUPABASE_URL và SUPABASE_KEY phải được thiết lập trong biến môi trường.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def solve_captcha(page):
+    print("[Solve Captcha] PHÁT HIỆN CAPTCHA! Đang tiến hành giải...")
+    captcha_count = 0
+    max_retries = 3
+
+    while captcha_count < max_retries:
+        is_solved = solve_tiktok_captcha(page)
+
+        if is_solved:
+            print("[Solve Captcha] GIẢI THÀNH CÔNG")
+            time.sleep(2)
+            break
+        else:
+            print(
+                f"[Solve Captcha] Giả lập thất bại hoặc cần thử lại. (Lần {captcha_count + 1}/{max_retries})")
+            captcha_count += 1
+            time.sleep(3)
+
+            if captcha_count == max_retries:
+                print(
+                    "[Solve Captcha] Cảnh báo: Không thể giải Captcha sau nhiều lần thử.")
 
 
 def extract_products_data(product_card, category_name):
@@ -28,7 +54,8 @@ def extract_products_data(product_card, category_name):
         "sold": "0",
         "original_price": "0",
         "current_price": "0",
-        "discount_percent": "0%"
+        "discount_percent": "0%",
+        "update_at": datetime.now(timezone.utc).isoformat()
     }
 
     try:
@@ -88,7 +115,7 @@ def extract_products_data(product_card, category_name):
             data["discount_percent"] = discount_el.inner_text().strip()
 
     except Exception as e:
-        print(f"Lỗi khi trích xuất dữ liệu sản phẩm: {e}")
+        print(f"[Extract Data]Lỗi khi trích xuất dữ liệu sản phẩm: {e}")
 
     return data
 
@@ -97,12 +124,13 @@ def scrape_tiktok_shop(url):
     user_data_dir = './tiktok_user_data'
 
     with sync_playwright() as p:
-        print("--- Khởi động trình duyệt ---")
+        print("[Scrape]Khởi động trình duyệt")
 
         args = [
             '--disable-blink-features=AutomationControlled',
             '--start-maximized',
             '--disable-infobars',
+            '--no-sandbox'
         ]
 
         context = p.chromium.launch_persistent_context(
@@ -110,6 +138,7 @@ def scrape_tiktok_shop(url):
             headless=False,
             channel="chrome",
             args=args,
+            viewport=None,
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
 
@@ -120,15 +149,19 @@ def scrape_tiktok_shop(url):
             });
         """)
 
-        print("--- Đang truy cập trang TikTok Shop ---")
+        print("[Scrape]Đang truy cập trang TikTok Shop")
         page.goto(url)
+
+        # Giải Captcha
+        solve_captcha(page)
+        time.sleep(2)
 
         try:
             page.locator(
                 "div.flex-1.flex.justify-center").wait_for(timeout=10000)
         except:
-            print("Không tìm thấy element chính")
-            input("Nhấn Enter để tiếp tục...")
+            print("[Scrape] Không tìm thấy element chính")
+            input("[Scrape] Nhấn Enter để tiếp tục...")
 
         category_elements = page.query_selector_all('a[href*="/c/"]')
         categories = []
@@ -146,23 +179,23 @@ def scrape_tiktok_shop(url):
 
         categories = list({v['url']: v for v in categories}.values())
 
-        print(f"--- Tìm thấy {len(categories)} danh mục ---")
-        print("-" * 50)
+        print(f"[Scrape] Tìm thấy {len(categories)} danh mục")
+        print("-" * 100)
 
         for index, cat in enumerate(categories):
             print(
-                f" --- ({index + 1}/{len(categories)}) Đang xử lý danh mục: {cat['name']} ---")
+                f"[Scrape] ({index + 1}/{len(categories)}) Đang xử lý danh mục: {cat['name']}")
 
             try:
                 page.goto(cat['url'])
                 while True:
-                    if page.locator("div:has-text('Verify to continue:')").count() > 0:
-                        input(
-                            "Có CAPTCHA! Vui lòng giải quyết và nhấn Enter để tiếp tục...")
+                    if page.locator("div:has-text('Verify to continue:')").count() > 0 or page.locator("#captcha-verify-image").count() > 0:
+                        solve_captcha(page)
+                        time.sleep(2)
 
                     else:
                         if page.locator('div.flex.justify-center.mt-16:has-text("No more products")').count() > 0:
-                            print("--- Đã tải hết sản phẩm ---")
+                            print("[Scrape] Đã tải hết sản phẩm")
                             break
 
                         else:
@@ -182,21 +215,22 @@ def scrape_tiktok_shop(url):
                         cat_products.append(data)
 
                 print(
-                    f"--- Danh mục '{cat['name']}' thu thập được {len(cat_products)} sản phẩm ---")
+                    f"[Scrape] Danh mục '{cat['name']}' thu thập được {len(cat_products)} sản phẩm")
+                print("-" * 50)
 
                 if cat_products:
                     supabase.table('products').upsert(
                         cat_products, on_conflict="product_id").execute()
                     print(
-                        f"--- Dữ liệu danh mục '{cat['name']}' đã được lưu vào Supabase ---")
+                        f"[Scrape] Dữ liệu danh mục '{cat['name']}' đã được lưu vào Supabase")
 
             except Exception as e:
-                print(f"Lỗi khi xử lý danh mục '{cat['name']}': {e}")
+                print(f"[Scrape] Lỗi khi xử lý danh mục '{cat['name']}': {e}")
 
             time.sleep(2)
 
-        print("-" * 50)
-        print("--- Hoàn tất thu thập dữ liệu từ TikTok Shop ---")
+        print("-" * 100)
+        print("[Scrape] Hoàn tất thu thập dữ liệu từ TikTok Shop")
         context.close()
 
 
