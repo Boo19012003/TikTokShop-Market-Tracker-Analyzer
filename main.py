@@ -1,101 +1,94 @@
 from playwright.sync_api import sync_playwright
 import time
-import pandas as pd
 import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError(
+        "SUPABASE_URL và SUPABASE_KEY phải được thiết lập trong biến môi trường.")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def extract_products_data(product_card, category_name):
     data = {
-        "Product_ID": "N/A",
-        "Title": "N/A",
-        "Link": "N/A",
-        "Category": category_name,
-        "Label_Trend": "Không",    # Nhãn: Xu hướng / Hàng Việt
-        "Label_Marketing": "Không",     # Nhãn: Deal / Flash Sale
-        "Rating": "0",
-        "Sold": "0",
-        "Original_Price": "N/A",
-        "Current_Price": "N/A",
-        "Discount_Percent": "0%"
+        "product_id": "N/A",
+        "title": "N/A",
+        "link": "N/A",
+        "category": category_name,
+        "label_trend": "Không",  # Nhãn: Xu hướng / Hàng Việt
+        "label_marketing": "Không",  # Nhãn: Deal / Flash Sale
+        "rating": "0",
+        "sold": "0",
+        "original_price": "0",
+        "current_price": "0",
+        "discount_percent": "0%"
     }
 
-    # Title và nhãn (xu hướng / hàng Việt)
     try:
+        # Tiêu đề sản phẩm và nhãn xu hướng / hàng Việt
         title_el = product_card.query_selector("h3")
-
         if title_el:
-            data["Title"] = title_el.inner_text().strip()
-
+            data["title"] = title_el.inner_text().strip()
             img_labels = title_el.query_selector_all("img")
             for img in img_labels:
                 src = img.get_attribute("src")
                 if src:
                     if "6146a1d9caee4ae286fa92f8cbc0c449" in src:
-                        data["Label_Trend"] = "Xu hướng"
-                        break
+                        data["label_trend"] = "Xu hướng"
                     elif "751625e8194f455cb1ce639b4f9dff2c" in src:
-                        data["Label_Trend"] = "Hàng Việt"
-                        break
-    except:
-        pass
-    # Link sản phẩm & Product ID
-    try:
+                        data["label_trend"] = "Hàng Việt"
+
+        # Link sản phẩm & Product ID
         link_el = product_card.query_selector("a[href*='/pdp/']")
         if link_el:
             href = link_el.get_attribute("href")
-
             if href.startswith("/pdp/"):
-                data["Link"] = "https://www.tiktok.com" + href
+                data["link"] = "https://www.tiktok.com" + href
             else:
-                data["Link"] = href
+                data["link"] = href
 
             # Lấy Product ID từ URL
-            Product_ID = href.split('?')[0].rsplit('/')[-1]
-            data["Product_ID"] = Product_ID
-    except:
-        pass
+            data["product_id"] = href.split('?')[0].rsplit('/')[-1]
 
-    # Đánh giá sao
-    try:
+        # Đánh giá sao
         rating_el = product_card.query_selector("span.P3-Semibold.mr-2")
         if rating_el:
-            data["Rating"] = rating_el.inner_text().strip()
-    except:
-        pass
+            data["rating"] = rating_el.inner_text().strip()
 
-    # Số sản phẩm đã bán
-    try:
+        # Số sản phẩm đã bán
         sold_el = product_card.query_selector("span:has-text('sold')")
         if sold_el:
-            data["Sold"] = sold_el.inner_text().strip().replace(" sold", "")
-    except:
-        pass
+            data["sold"] = sold_el.inner_text().strip().replace(" sold", "")
 
-    # Nhãn marketing (Deal / Flash Sale)
-    try:
+        # Nhãn marketing (Deal / Flash Sale)
         if product_card.query_selector("span:has-text('Deal')"):
-            data["Label_Marketing"] = "Deal"
+            data["label_marketing"] = "Deal"
         elif product_card.query_selector("span:has-text('Flash Sale')"):
-            data["Label_Marketing"] = "Flash Sale"
-    except:
-        pass
+            data["label_marketing"] = "Flash Sale"
 
-    # Giá gốc, giá hiện tại và phần trăm giảm giá
-    try:
+        # Giá gốc, giá hiện tại và phần trăm giảm giá
         current_price_el = product_card.query_selector("span.H2-Semibold")
         if current_price_el:
-            data["Current_Price"] = current_price_el.inner_text().strip()
+            data["current_price"] = current_price_el.inner_text().strip()
 
         original_price_el = product_card.query_selector("span.line-through")
         if original_price_el:
-            data["Original_Price"] = original_price_el.inner_text().strip()
+            data["original_price"] = original_price_el.inner_text().strip()
 
         discount_el = product_card.query_selector(
             "span:has-text('-'):has-text('%')")
         if discount_el:
-            data["Discount_Percent"] = discount_el.inner_text().strip()
-    except:
-        pass
+            data["discount_percent"] = discount_el.inner_text().strip()
+
+    except Exception as e:
+        print(f"Lỗi khi trích xuất dữ liệu sản phẩm: {e}")
 
     return data
 
@@ -138,18 +131,21 @@ def scrape_tiktok_shop(url):
             input("Nhấn Enter để tiếp tục...")
 
         category_elements = page.query_selector_all('a[href*="/c/"]')
-
         categories = []
+
         for cat in category_elements:
             url = cat.get_attribute('href')
             name = cat.inner_text().strip()
 
             if url:
-                full_url = "https://www.tiktok.com" + \
-                    url if url.startswith("/c/") else url
+                if url.startswith("/c/"):
+                    full_url = "https://www.tiktok.com" + url
+                else:
+                    full_url = url
                 categories.append({"name": name, "url": full_url})
 
         categories = list({v['url']: v for v in categories}.values())
+
         print(f"--- Tìm thấy {len(categories)} danh mục ---")
         print("-" * 50)
 
@@ -160,9 +156,9 @@ def scrape_tiktok_shop(url):
             try:
                 page.goto(cat['url'])
                 while True:
-                    if page.locator("div.sc-iRbamj.gtaCnW.captcha_verify_bar--title:has-text('Verify to continue:')").count() > 0:
+                    if page.locator("div:has-text('Verify to continue:')").count() > 0:
                         input(
-                            "Nhấn Enter để tiếp tục sau khi đã giải quyết CAPTCHA...")
+                            "Có CAPTCHA! Vui lòng giải quyết và nhấn Enter để tiếp tục...")
 
                     else:
                         if page.locator('div.flex.justify-center.mt-16:has-text("No more products")').count() > 0:
@@ -182,20 +178,17 @@ def scrape_tiktok_shop(url):
                 cat_products = []
                 for card in product_cards:
                     data = extract_products_data(card, cat['name'])
-                    cat_products.append(data)
+                    if data["product_id"] != "N/A":
+                        cat_products.append(data)
 
                 print(
                     f"--- Danh mục '{cat['name']}' thu thập được {len(cat_products)} sản phẩm ---")
 
                 if cat_products:
-                    df = pd.DataFrame(cat_products)
-                    csv_file = "tiktok_shop_products.csv"
-
-                    header_mode = not os.path.exists(csv_file)
-                    df.to_csv(csv_file, mode='a', index=False,
-                              header=header_mode, encoding='utf-8-sig')
+                    supabase.table('products').upsert(
+                        cat_products, on_conflict="product_id").execute()
                     print(
-                        f"--- Dữ liệu sản phẩm đã được lưu vào '{csv_file}' ---")
+                        f"--- Dữ liệu danh mục '{cat['name']}' đã được lưu vào Supabase ---")
 
             except Exception as e:
                 print(f"Lỗi khi xử lý danh mục '{cat['name']}': {e}")
